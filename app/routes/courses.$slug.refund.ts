@@ -58,7 +58,7 @@ function getLessonIdsForCourse(courseId: number): number[] {
   return rows.map((row) => row.id);
 }
 
-function getOpenRefundRequest(purchaseId: number) {
+function getRequestedRefundRequest(purchaseId: number) {
   return db
     .select()
     .from(refunds)
@@ -141,8 +141,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("You have not bought this course.", { status: 403 });
   }
 
-  if (getOpenRefundRequest(purchase.id)) {
-    throw data("You already have a request open on this purchase.", {
+  if (getRequestedRefundRequest(purchase.id)) {
+    throw data("You already have a Refund Request waiting for an Admin on this purchase.", {
       status: 409,
     });
   }

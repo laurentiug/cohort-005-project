@@ -212,7 +212,7 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       {pendingRefundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
-            <h2 className="text-lg font-semibold">Pending Refund Requests</h2>
+            <h2 className="text-lg font-semibold">Refund Requests</h2>
             <p className="text-sm text-muted-foreground">
               {pendingRefundRequests.length === 1
                 ? "One Refund Request is waiting for an Admin to review it."
@@ -230,7 +230,7 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                     {refundRequest.courseTitle}
                   </Link>
                   <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                    Pending
+                    Requested
                   </span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
