@@ -4,10 +4,9 @@
  * be refunded; once it is refunded, the unclaimed seats can't be claimed.
  */
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
-import { db } from "~/db";
+import { db, type Transaction } from "~/db";
 import { coupons } from "~/db/schema";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Executor = typeof db | Transaction;
 
 /** Has anyone redeemed a seat code bought with this purchase? */

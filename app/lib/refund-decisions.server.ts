@@ -14,7 +14,7 @@
  */
 import { data } from "react-router";
 import { and, eq } from "drizzle-orm";
-import { db } from "~/db";
+import { db, type Transaction } from "~/db";
 import {
   RefundStatus,
   UserRole,
@@ -49,7 +49,6 @@ export async function requireAdmin(request: Request) {
   return currentUser;
 }
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** What a decision needs to know about the Refund Request being decided. */
 export type RefundRequestToDecide = {
