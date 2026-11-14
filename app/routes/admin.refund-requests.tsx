@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { data, isRouteErrorResponse, Link, useFetcher } from "react-router";
 import { z } from "zod";
 import { AlertTriangle, ReceiptText } from "lucide-react";
@@ -6,18 +6,27 @@ import type { Route } from "./+types/admin.refund-requests";
 import {
   RefundStatus,
   courses,
+  enrollments,
   purchases,
   refunds,
   users,
 } from "~/db/schema";
 import { db } from "~/db";
+import { activeEnrollmentOf } from "~/lib/enrollments";
+import {
+  hasClaimedSeat,
+  voidUnclaimedSeats,
+} from "~/lib/seat-codes.server";
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
 import { formatPrice } from "~/lib/utils";
 import { parseFormData } from "~/lib/validation";
 import { decideRefundRequest, requireAdmin } from "~/lib/refund-decisions.server";
-import { buildRefundDeclinedEmail } from "~/lib/refund-emails.server";
+import {
+  buildRefundApprovedEmail,
+  buildRefundDeclinedEmail,
+} from "~/lib/refund-emails.server";
 import { sendEmail } from "~/lib/email.server";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -69,6 +78,8 @@ function getOpenRefundRequests(now: Date, viewingAdminId: number) {
     ...row,
     // An Admin never decides their own Refund Request: no buttons for it.
     isOwnRequest: row.learnerId === viewingAdminId,
+    // A team licence with a claimed seat can't be Approved, only Declined.
+    hasClaimedSeat: hasClaimedSeat(row.purchaseId),
     daysSincePurchase: calendarDaysBetween(row.purchasedAt, now),
     hoursWatched: getWatchedSeconds(row.learnerId, row.courseId) / 3600,
   }));
@@ -120,6 +131,10 @@ const refundRequestActionSchema = z.discriminatedUnion("intent", [
       .min(1, "Tell the learner why their Refund Request is declined.")
       .max(1000, "Please keep the reason under 1000 characters."),
   }),
+  z.object({
+    intent: z.literal("approve"),
+    refundRequestId: z.coerce.number().int(),
+  }),
 ]);
 
 export async function action({ request }: Route.ActionArgs) {
@@ -130,6 +145,46 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (!parsed.success) {
     return data({ errors: parsed.errors }, { status: 400 });
+  }
+
+  if (parsed.data.intent === "approve") {
+    const approved = decideRefundRequest({
+      refundRequestId: parsed.data.refundRequestId,
+      admin,
+      outcome: RefundStatus.Approved,
+      // A Refund is always the full amount paid. It stays Pending: no
+      // payment provider is called.
+      decide: (tx, request) => {
+        // We never refund money for a seat someone is using.
+        if (hasClaimedSeat(request.purchaseId, tx)) {
+          throw data(
+            "A seat on this team licence has been claimed, so it can't be refunded. You can still decline it.",
+            { status: 409 }
+          );
+        }
+
+        // Access ends right away. The row is kept, not deleted (ADR 0001),
+        // and lesson progress is untouched for if they buy again.
+        tx.update(enrollments)
+          .set({ revokedAt: new Date().toISOString() })
+          .where(activeEnrollmentOf(request.learnerId, request.courseId))
+          .run();
+
+        // On a team licence, nobody can claim a seat that has been refunded.
+        voidUnclaimedSeats(request.purchaseId, tx);
+
+        return { amountRefunded: request.amountPaid };
+      },
+    });
+
+    sendEmail(
+      buildRefundApprovedEmail({
+        ...approved,
+        amountRefunded: approved.amountPaid,
+      })
+    );
+
+    return { success: true };
   }
 
   const { reason, refundRequestId } = parsed.data;
@@ -251,7 +306,17 @@ export default function AdminRefundRequests({
                             Your own request — another Admin decides it
                           </span>
                         ) : (
-                          <DeclineForm refundRequestId={request.id} />
+                          <div className="flex flex-col items-start gap-2">
+                            {request.hasClaimedSeat ? (
+                              <span className="text-xs text-muted-foreground">
+                                A seat on this team licence has been claimed,
+                                so it can't be approved.
+                              </span>
+                            ) : (
+                              <ApproveButton request={request} />
+                            )}
+                            <DeclineForm refundRequestId={request.id} />
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -321,6 +386,86 @@ export default function AdminRefundRequests({
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Approve asks for confirmation first: the learner, the course, the amount,
+ * and that the learner will lose access to the course.
+ */
+function ApproveButton({
+  request,
+}: {
+  request: {
+    id: number;
+    learnerName: string;
+    learnerEmail: string;
+    courseTitle: string;
+    amountPaid: number;
+  };
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const busy = fetcher.state !== "idle";
+
+  return (
+    <>
+      <Button size="sm" onClick={() => dialogRef.current?.showModal()}>
+        Approve
+      </Button>
+      <dialog
+        ref={dialogRef}
+        aria-labelledby={`approve-title-${request.id}`}
+        className="m-auto w-full max-w-md rounded-lg border border-border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/50"
+      >
+        <h3
+          id={`approve-title-${request.id}`}
+          className="mb-3 text-lg font-semibold"
+        >
+          Approve this Refund Request?
+        </h3>
+        <dl className="mb-4 space-y-1 text-sm">
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">Learner:</dt>
+            <dd>
+              {request.learnerName} ({request.learnerEmail})
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">Course:</dt>
+            <dd>{request.courseTitle}</dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">Refund:</dt>
+            <dd className="font-medium">{formatPrice(request.amountPaid)}</dd>
+          </div>
+        </dl>
+        <p className="mb-6 text-sm">
+          The learner will lose access to this course straight away. Their
+          progress is kept in case they buy it again.
+        </p>
+        <fetcher.Form
+          method="post"
+          className="flex justify-end gap-2"
+          onSubmit={() => dialogRef.current?.close()}
+        >
+          <input type="hidden" name="intent" value="approve" />
+          <input type="hidden" name="refundRequestId" value={request.id} />
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => dialogRef.current?.close()}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={busy}>
+            {busy
+              ? "Approving…"
+              : `Approve ${formatPrice(request.amountPaid)} refund`}
+          </Button>
+        </fetcher.Form>
+      </dialog>
+    </>
   );
 }
 
