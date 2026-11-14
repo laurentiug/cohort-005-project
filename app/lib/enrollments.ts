@@ -1,4 +1,5 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { db } from "~/db";
 import { enrollments } from "~/db/schema";
 
 // ─── Active Enrollments ───
@@ -22,4 +23,24 @@ export function activeEnrollmentOf(userId: number, courseId: number) {
     eq(enrollments.courseId, courseId),
     activeEnrollment()
   );
+}
+
+/** Does this user have an active enrollment in this course? */
+export function isEnrolled(userId: number, courseId: number) {
+  const enrollment = db
+    .select({ id: enrollments.id })
+    .from(enrollments)
+    .where(activeEnrollmentOf(userId, courseId))
+    .get();
+  return !!enrollment;
+}
+
+/** How many learners are actively enrolled in this course. */
+export function countActiveEnrollments(courseId: number) {
+  const result = db
+    .select({ count: sql<number>`count(*)` })
+    .from(enrollments)
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
+    .get();
+  return result?.count ?? 0;
 }

@@ -1,11 +1,11 @@
 import { data } from "react-router";
 import { eq, and, desc } from "drizzle-orm";
 import { db } from "~/db";
-import { UserRole, users, courses, enrollments, purchases } from "~/db/schema";
+import { UserRole, users, courses, purchases } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
-import { activeEnrollmentOf } from "~/lib/enrollments";
+import { isEnrolled } from "~/lib/enrollments";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
@@ -13,18 +13,6 @@ function getUserById(id: number) {
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
-}
-
-function findEnrollment(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(enrollments)
-    .where(activeEnrollmentOf(userId, courseId))
-    .get();
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  return !!findEnrollment(userId, courseId);
 }
 
 // A learner who was refunded and bought again has several purchases; the
@@ -93,7 +81,7 @@ export async function getAccess(
   const isAdmin = user.role === UserRole.Admin;
   const isOwningInstructor = course?.instructorId === userId;
   const isStaff = isAdmin || isOwningInstructor;
-  const enrolled = isUserEnrolled(userId, courseId);
+  const enrolled = isEnrolled(userId, courseId);
 
   // PPP only restricts students who bought at a discount — staff are exempt.
   let ppp = {

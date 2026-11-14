@@ -10,7 +10,7 @@ import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
 import { data } from "react-router";
 import { db } from "~/db";
 import { purchases, coupons, courses, enrollments } from "~/db/schema";
-import { activeEnrollmentOf } from "~/lib/enrollments";
+import { isEnrolled } from "~/lib/enrollments";
 import { eq, and, isNull } from "drizzle-orm";
 
 function getCourseById(id: number) {
@@ -19,16 +19,6 @@ function getCourseById(id: number) {
 
 function getCouponByCode(code: string) {
   return db.select().from(coupons).where(eq(coupons.code, code)).get();
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  const existing = db
-    .select()
-    .from(enrollments)
-    .where(activeEnrollmentOf(userId, courseId))
-    .get();
-
-  return !!existing;
 }
 
 // The team licence was refunded, so its unclaimed seats can't be claimed.
@@ -56,7 +46,7 @@ function redeemCoupon(code: string, userId: number, userCountry: string) {
     throw data(VOIDED_MESSAGE, { status: 410 });
   }
 
-  if (isUserEnrolled(userId, coupon.courseId)) {
+  if (isEnrolled(userId, coupon.courseId)) {
     throw data("You are already enrolled in this course.", { status: 409 });
   }
 
@@ -149,7 +139,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
   const alreadyRedeemed = coupon.redeemedByUserId !== null;
   const voided = !alreadyRedeemed && coupon.voidedAt !== null;
-  const alreadyEnrolled = isUserEnrolled(currentUserId, coupon.courseId);
+  const alreadyEnrolled = isEnrolled(currentUserId, coupon.courseId);
 
   // Check country mismatch upfront so we can show a clear message
   let countryMismatch = false;
