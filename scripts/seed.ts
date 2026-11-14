@@ -2839,6 +2839,46 @@ This course is still in draft while the cluster examples are rewritten against t
 
   console.log("Created Liam's Refund Request.");
 
+  // ─── Sophia's Approved Refund Request ───
+  // An individual purchase an Admin refunded in full. Her enrollment row is
+  // kept with `revokedAt` set rather than deleted (ADR 0001), and her lesson
+  // progress stays in case she buys again.
+
+  const sophia = studentByEmail("sophia.davis@student.dev");
+  const [sophiaPurchase] = db
+    .insert(schema.purchases)
+    .values({
+      userId: sophia.id,
+      courseId: course4.id,
+      amountPaid: course4.price,
+      country: "US",
+      createdAt: daysAgo(12),
+    })
+    .returning()
+    .all();
+  db.insert(schema.enrollments)
+    .values({
+      userId: sophia.id,
+      courseId: course4.id,
+      enrolledAt: daysAgo(12),
+      revokedAt: daysAgo(8),
+    })
+    .run();
+  markComplete(sophia.id, course4LessonIds[0], 11);
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: sophiaPurchase.id,
+      status: RefundStatus.Approved,
+      reason: "The course covers less of D3 than I needed for work.",
+      amountRefunded: sophiaPurchase.amountPaid,
+      requestedAt: daysAgo(10),
+      resolvedAt: daysAgo(8),
+      resolvedByUserId: admin.id,
+    })
+    .run();
+
+  console.log("Created Sophia's Approved Refund Request.");
+
   // ─── Flush watch events ───
   // Batched: the heartbeat makes these by far the largest table, and one
   // statement per row would dominate the seed's runtime.
