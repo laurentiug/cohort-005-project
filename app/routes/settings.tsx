@@ -10,19 +10,13 @@ import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
-import {
-  UserRole,
-  RefundStatus,
-  users,
-  courses,
-  purchases,
-  refunds,
-} from "~/db/schema";
+import { UserRole, RefundStatus, users } from "~/db/schema";
 import { AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
+import { getRefundRequestsByPurchase } from "~/lib/refund-requests.server";
 
 const settingsSchema = z.object({
   name: z.string().trim().min(1, "Name cannot be empty."),
@@ -67,81 +61,6 @@ export async function loader({ request }: Route.LoaderArgs) {
     },
     refundRequestsByPurchase,
   };
-}
-
-/**
- * For each of the learner's purchases that has any Refund Request: the Open
- * one (if any) and the latest decided one (by `resolvedAt`, if any). Older
- * decisions are left out — the learner only needs the current outcome.
- */
-function getRefundRequestsByPurchase(learnerId: number) {
-  const rows = db
-    .select({
-      id: refunds.id,
-      purchaseId: purchases.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      amountPaid: purchases.amountPaid,
-      status: refunds.status,
-      reason: refunds.reason,
-      requestedAt: refunds.requestedAt,
-      resolvedAt: refunds.resolvedAt,
-      declineReason: refunds.declineReason,
-      amountRefunded: refunds.amountRefunded,
-    })
-    .from(refunds)
-    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
-    .innerJoin(courses, eq(purchases.courseId, courses.id))
-    .where(eq(purchases.userId, learnerId))
-    .orderBy(desc(purchases.id))
-    .all();
-
-  type Row = (typeof rows)[number];
-  const byPurchase = new Map<
-    number,
-    {
-      purchaseId: number;
-      courseTitle: string;
-      courseSlug: string;
-      amountPaid: number;
-      openRequest: Pick<Row, "id" | "reason" | "requestedAt"> | null;
-      latestDecision: Omit<
-        Row,
-        "purchaseId" | "courseTitle" | "courseSlug" | "amountPaid"
-      > | null;
-    }
-  >();
-
-  for (const row of rows) {
-    const { purchaseId, courseTitle, courseSlug, amountPaid, ...request } = row;
-    let entry = byPurchase.get(purchaseId);
-    if (!entry) {
-      entry = {
-        purchaseId,
-        courseTitle,
-        courseSlug,
-        amountPaid,
-        openRequest: null,
-        latestDecision: null,
-      };
-      byPurchase.set(purchaseId, entry);
-    }
-
-    if (request.status === RefundStatus.Open) {
-      entry.openRequest = {
-        id: request.id,
-        reason: request.reason,
-        requestedAt: request.requestedAt,
-      };
-    } else if (
-      !entry.latestDecision ||
-      (request.resolvedAt ?? "") > (entry.latestDecision.resolvedAt ?? "")
-    ) {
-      entry.latestDecision = request;
-    }
-  }
-
-  return [...byPurchase.values()];
 }
 
 export async function action({ request }: Route.ActionArgs) {
