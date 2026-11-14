@@ -19,6 +19,7 @@ import {
   CourseStatus,
   TeamMemberRole,
 } from "~/db/schema";
+import { activeEnrollment, activeEnrollmentOf } from "~/lib/enrollments";
 import { eq, and, or, sql } from "drizzle-orm";
 import crypto from "crypto";
 import { Card, CardContent } from "~/components/ui/card";
@@ -122,9 +123,7 @@ function findEnrollment(userId: number, courseId: number) {
   return db
     .select()
     .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
+    .where(activeEnrollmentOf(userId, courseId))
     .get();
 }
 
@@ -136,7 +135,7 @@ function getEnrollmentCountForCourse(courseId: number) {
   const result = db
     .select({ count: sql<number>`count(*)` })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .get();
 
   return result?.count ?? 0;

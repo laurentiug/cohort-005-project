@@ -12,6 +12,7 @@ import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
 import { data } from "react-router";
 import { db } from "~/db";
 import { purchases, coupons, courses, enrollments } from "~/db/schema";
+import { activeEnrollmentOf } from "~/lib/enrollments";
 import { eq, and } from "drizzle-orm";
 
 function getCourseById(id: number) {
@@ -26,9 +27,7 @@ function isUserEnrolled(userId: number, courseId: number) {
   const existing = db
     .select()
     .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
+    .where(activeEnrollmentOf(userId, courseId))
     .get();
 
   return !!existing;
@@ -55,12 +54,7 @@ function redeemCoupon(
   const existingEnrollment = db
     .select()
     .from(enrollments)
-    .where(
-      and(
-        eq(enrollments.userId, userId),
-        eq(enrollments.courseId, coupon.courseId)
-      )
-    )
+    .where(activeEnrollmentOf(userId, coupon.courseId))
     .get();
 
   if (existingEnrollment) {

@@ -132,6 +132,9 @@ export const enrollments = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
     completedAt: text("completed_at"),
+    // Set when access ends (an approved Refund Request). The row is kept as a
+    // record of who had access and when — see ADR 0001.
+    revokedAt: text("revoked_at"),
   },
   (table) => [index("enrollments_course_idx").on(table.courseId)]
 );
