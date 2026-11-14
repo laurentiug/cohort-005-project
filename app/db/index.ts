@@ -55,3 +55,6 @@ export const db = /* @__PURE__ */ new Proxy({} as ReturnType<typeof getDb>, {
     return typeof value === "function" ? value.bind(target) : value;
   },
 });
+
+/** The `tx` handed to a `db.transaction` callback. */
+export type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];

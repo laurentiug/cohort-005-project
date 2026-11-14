@@ -29,7 +29,7 @@ export function createTestDb() {
 }
 
 /**
- * Seeds a minimal set of base data (user, category, course) that most tests need.
+ * Seeds a minimal set of base data (learner, instructor, admin, category, course) that most tests need.
  * Returns the created IDs for use in test assertions.
  */
 export function seedBaseData(testDb: ReturnType<typeof createTestDb>) {
@@ -49,6 +49,16 @@ export function seedBaseData(testDb: ReturnType<typeof createTestDb>) {
       name: "Test Instructor",
       email: "instructor@example.com",
       role: schema.UserRole.Instructor,
+    })
+    .returning()
+    .get();
+
+  const admin = testDb
+    .insert(schema.users)
+    .values({
+      name: "Test Admin",
+      email: "admin@example.com",
+      role: schema.UserRole.Admin,
     })
     .returning()
     .get();
@@ -73,5 +83,5 @@ export function seedBaseData(testDb: ReturnType<typeof createTestDb>) {
     .returning()
     .get();
 
-  return { user, instructor, category, course };
+  return { user, instructor, admin, category, course };
 }

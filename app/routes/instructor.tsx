@@ -19,8 +19,9 @@ import {
 import { CourseImage } from "~/components/course-image";
 import { data, isRouteErrorResponse } from "react-router";
 import { CourseStatus, UserRole } from "~/db/schema";
+import { countActiveEnrollments } from "~/lib/enrollments";
 import { db } from "~/db";
-import { users, courses, modules, lessons, enrollments } from "~/db/schema";
+import { users, courses, modules, lessons } from "~/db/schema";
 import { eq, or, sql } from "drizzle-orm";
 
 function getUserById(id: number) {
@@ -53,16 +54,6 @@ function getLessonCountForCourse(courseId: number) {
   return count?.count ?? 0;
 }
 
-function getEnrollmentCountForCourse(courseId: number) {
-  const result = db
-    .select({ count: sql<number>`count(*)` })
-    .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
-    .get();
-
-  return result?.count ?? 0;
-}
-
 export function meta() {
   return [
     { title: "My Courses — Cadence" },
@@ -91,7 +82,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const coursesWithStats = instructorCourses.map((course) => {
     const lessonCount = getLessonCountForCourse(course.id);
-    const enrollmentCount = getEnrollmentCountForCourse(course.id);
+    const enrollmentCount = countActiveEnrollments(course.id);
 
     return {
       id: course.id,

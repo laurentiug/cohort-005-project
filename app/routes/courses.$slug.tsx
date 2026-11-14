@@ -11,7 +11,6 @@ import {
   users,
   modules,
   lessons,
-  enrollments,
   lessonProgress,
   courseRatings,
   purchases,
@@ -21,6 +20,7 @@ import {
   LessonProgressStatus,
   RefundStatus,
 } from "~/db/schema";
+import { isEnrolled } from "~/lib/enrollments";
 import { eq, and, or, sql, inArray, isNotNull } from "drizzle-orm";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -134,17 +134,6 @@ function getLessonCountForCourse(courseId: number) {
     .get();
 
   return count?.count ?? 0;
-}
-
-function isUserEnrolled(userId: number, courseId: number) {
-  const enrollment = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
-  return !!enrollment;
 }
 
 function getCourseLessonIds(courseId: number): number[] {
@@ -520,7 +509,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let refundOffer: { amount: number; lastDayInWindow: string } | null = null;
 
   if (currentUserId) {
-    enrolled = isUserEnrolled(currentUserId, course.id);
+    enrolled = isEnrolled(currentUserId, course.id);
 
     if (enrolled) {
       refundOffer = getRefundOffer(currentUserId, { id: course.id });
@@ -585,7 +574,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("Course not found", { status: 404 });
   }
 
-  if (!isUserEnrolled(currentUserId, course.id)) {
+  if (!isEnrolled(currentUserId, course.id)) {
     throw data("You must be enrolled in this course to rate it.", {
       status: 403,
     });

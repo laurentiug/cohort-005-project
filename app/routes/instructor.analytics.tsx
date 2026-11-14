@@ -36,6 +36,7 @@ import {
   quizzes,
   users,
 } from "~/db/schema";
+import { activeEnrollment } from "~/lib/enrollments";
 import { splitRevenue, type AnalyticsRange } from "~/lib/analytics";
 import { getDiscountForCountry } from "~/lib/ppp";
 import {
@@ -241,7 +242,12 @@ function getStudentRevenue(
     .from(enrollments)
     .innerJoin(courses, eq(enrollments.courseId, courses.id))
     .innerJoin(users, eq(users.id, enrollments.userId))
-    .where(scopeOn(enrollments.enrolledAt, instructorId, range))
+    .where(
+      and(
+        scopeOn(enrollments.enrolledAt, instructorId, range),
+        activeEnrollment()
+      )
+    )
     .orderBy(users.name)
     .all();
 
@@ -364,7 +370,13 @@ function getTopBuyers(
       .selectDistinct({ userId: enrollments.userId })
       .from(enrollments)
       .innerJoin(courses, eq(enrollments.courseId, courses.id))
-      .where(and(inArray(enrollments.userId, buyerIds), ownedBy(instructorId)))
+      .where(
+        and(
+          inArray(enrollments.userId, buyerIds),
+          ownedBy(instructorId),
+          activeEnrollment()
+        )
+      )
       .all()
       .map((row) => row.userId)
   );
@@ -508,7 +520,7 @@ function getCourseProgressSummary(courseId: number): CourseProgressSummary {
         inArray(lessonProgress.lessonId, courseLessonIds(courseId))
       )
     )
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .groupBy(enrollments.userId)
     .all();
 
@@ -546,7 +558,7 @@ function getCourseDropOff(courseId: number): CourseFunnel {
   const enrolled = db
     .select({ enrolledCount: countDistinct(enrollments.userId) })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .get();
 
   const enrolledCount = enrolled?.enrolledCount ?? 0;
@@ -583,7 +595,8 @@ function getCourseDropOff(courseId: number): CourseFunnel {
       enrollments,
       and(
         eq(enrollments.userId, lessonProgress.userId),
-        eq(enrollments.courseId, courseId)
+        eq(enrollments.courseId, courseId),
+        activeEnrollment()
       )
     )
     .where(

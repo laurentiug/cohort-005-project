@@ -10,6 +10,7 @@ import {
 import type { Route } from "./+types/instructor.$courseId";
 import { getCurrentUserId } from "~/lib/session";
 import { CourseStatus, UserRole } from "~/db/schema";
+import { activeEnrollment, countActiveEnrollments } from "~/lib/enrollments";
 import { db } from "~/db";
 import {
   courses,
@@ -356,16 +357,6 @@ function moveLessonToModule(
     .get();
 }
 
-function getEnrollmentCountForCourse(courseId: number) {
-  const result = db
-    .select({ count: sql<number>`count(*)` })
-    .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
-    .get();
-
-  return result?.count ?? 0;
-}
-
 function getCourseEnrolledStudents(courseId: number) {
   return db
     .select({
@@ -375,7 +366,7 @@ function getCourseEnrolledStudents(courseId: number) {
       completedAt: enrollments.completedAt,
     })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .all();
 }
 
@@ -586,7 +577,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
 
   const lessonCount = getLessonCountForCourse(courseId);
-  const enrollmentCount = getEnrollmentCountForCourse(courseId);
+  const enrollmentCount = countActiveEnrollments(courseId);
 
   // Student roster data
   const enrolledStudents = getCourseEnrolledStudents(courseId);

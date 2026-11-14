@@ -2353,8 +2353,50 @@ This course is still in draft while the cluster examples are rewritten against t
     .where(eq(schema.coupons.id, seededCoupons[1].id))
     .run();
 
+  // Bossy also bought 3 seats of course 3 and got a Refund before anyone
+  // claimed one. Approving that Refund Request voided every seat code, so
+  // these codes show what a refunded team licence looks like.
+  const [refundedTeamPurchase] = db
+    .insert(schema.purchases)
+    .values({
+      userId: bossy.id,
+      courseId: course3.id,
+      amountPaid: 4999 * 3,
+      country: "US",
+      createdAt: daysAgo(12),
+    })
+    .returning()
+    .all();
+
+  db.insert(schema.coupons)
+    .values(
+      ["TEAM-DESIGN-P6Q7R8", "TEAM-DESIGN-S9T0U1", "TEAM-DESIGN-V2W3X4"].map(
+        (code) => ({
+          teamId: team1.id,
+          courseId: course3.id,
+          code,
+          purchaseId: refundedTeamPurchase.id,
+          createdAt: daysAgo(12),
+          voidedAt: daysAgo(9),
+        })
+      )
+    )
+    .run();
+
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: refundedTeamPurchase.id,
+      status: RefundStatus.Approved,
+      reason: "We picked a different design course for the team.",
+      amountRefunded: refundedTeamPurchase.amountPaid,
+      requestedAt: daysAgo(10),
+      resolvedAt: daysAgo(9),
+      resolvedByUserId: admin.id,
+    })
+    .run();
+
   console.log(
-    `Created 1 team with Bossy McBossface as admin, 1 team purchase, and ${seededCoupons.length} coupons (${countRows(schema.coupons, isNotNull(schema.coupons.redeemedByUserId))} redeemed, ${countRows(schema.coupons, isNull(schema.coupons.redeemedByUserId))} available).`
+    `Created 1 team with Bossy McBossface as admin, 2 team purchases, and ${seededCoupons.length + 3} coupons (${countRows(schema.coupons, isNotNull(schema.coupons.redeemedByUserId))} redeemed, ${countRows(schema.coupons, isNotNull(schema.coupons.voidedAt))} voided by a Refund).`
   );
 
   // ─── Generated history ───
@@ -2725,7 +2767,7 @@ This course is still in draft while the cluster examples are rewritten against t
   );
 
   // ─── Liam's Refund Request ───
-  // One learner with an Open Refund Request. The dates count back from
+  // One learner with a Declined and an Open Refund Request. The dates count back from
   // today, so the fourteen-day refund window is still open whenever you seed.
 
   const liam = studentByEmail("liam@example.com");
@@ -2772,6 +2814,20 @@ This course is still in draft while the cluster examples are rewritten against t
       updatedAt: daysAgo(6),
     })
     .run();
+  // His first Refund Request was Declined with a reason; a Declined request
+  // lets the learner ask again, which is why he has an Open one too.
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: liamPurchase.id,
+      status: RefundStatus.Declined,
+      reason: "Changed my mind.",
+      requestedAt: daysAgo(7),
+      resolvedAt: daysAgo(6),
+      resolvedByUserId: admin.id,
+      declineReason:
+        "Please tell us what about the course didn't work for you, so we can judge the request.",
+    })
+    .run();
   db.insert(schema.refunds)
     .values({
       purchaseId: liamPurchase.id,
@@ -2782,6 +2838,46 @@ This course is still in draft while the cluster examples are rewritten against t
     .run();
 
   console.log("Created Liam's Refund Request.");
+
+  // ─── Sophia's Approved Refund Request ───
+  // An individual purchase an Admin refunded in full. Her enrollment row is
+  // kept with `revokedAt` set rather than deleted (ADR 0001), and her lesson
+  // progress stays in case she buys again.
+
+  const sophia = studentByEmail("sophia.davis@student.dev");
+  const [sophiaPurchase] = db
+    .insert(schema.purchases)
+    .values({
+      userId: sophia.id,
+      courseId: course4.id,
+      amountPaid: course4.price,
+      country: "US",
+      createdAt: daysAgo(12),
+    })
+    .returning()
+    .all();
+  db.insert(schema.enrollments)
+    .values({
+      userId: sophia.id,
+      courseId: course4.id,
+      enrolledAt: daysAgo(12),
+      revokedAt: daysAgo(8),
+    })
+    .run();
+  markComplete(sophia.id, course4LessonIds[0], 11);
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: sophiaPurchase.id,
+      status: RefundStatus.Approved,
+      reason: "The course covers less of D3 than I needed for work.",
+      amountRefunded: sophiaPurchase.amountPaid,
+      requestedAt: daysAgo(10),
+      resolvedAt: daysAgo(8),
+      resolvedByUserId: admin.id,
+    })
+    .run();
+
+  console.log("Created Sophia's Approved Refund Request.");
 
   // ─── Flush watch events ───
   // Batched: the heartbeat makes these by far the largest table, and one

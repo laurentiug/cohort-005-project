@@ -1,6 +1,4 @@
 import { Link, useFetcher, redirect } from "react-router";
-import { useEffect } from "react";
-import { toast } from "sonner";
 import { z } from "zod";
 import type { Route } from "./+types/redeem.$code";
 import { getCurrentUserId } from "~/lib/session";
@@ -12,7 +10,8 @@ import { Ticket, AlertCircle, CheckCircle2, Globe } from "lucide-react";
 import { data } from "react-router";
 import { db } from "~/db";
 import { purchases, coupons, courses, enrollments } from "~/db/schema";
-import { eq, and } from "drizzle-orm";
+import { isEnrolled } from "~/lib/enrollments";
+import { eq, and, isNull } from "drizzle-orm";
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
@@ -22,49 +21,33 @@ function getCouponByCode(code: string) {
   return db.select().from(coupons).where(eq(coupons.code, code)).get();
 }
 
-function isUserEnrolled(userId: number, courseId: number) {
-  const existing = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
-    .get();
+// The team licence was refunded, so its unclaimed seats can't be claimed.
+const VOIDED_MESSAGE =
+  "This coupon can no longer be used: the team licence it came with has been refunded.";
+const ALREADY_REDEEMED_MESSAGE = "Coupon has already been redeemed.";
 
-  return !!existing;
-}
-
-type RedeemResult =
-  | { ok: true; enrollment: typeof enrollments.$inferSelect }
-  | { ok: false; error: string };
-
-function redeemCoupon(
-  code: string,
-  userId: number,
-  userCountry: string
-): RedeemResult {
+/**
+ * Claims the seat for `userId` and enrolls them, or throws why it can't.
+ * The claim is guarded on the seat still being unclaimed and not voided, and
+ * runs in one transaction with the enrollment, so a seat voided or claimed
+ * by someone else in the meantime enrolls nobody.
+ */
+function redeemCoupon(code: string, userId: number, userCountry: string) {
   const coupon = getCouponByCode(code);
   if (!coupon) {
-    return { ok: false, error: "Coupon not found" };
+    throw data("Coupon not found.", { status: 404 });
   }
 
   if (coupon.redeemedByUserId !== null) {
-    return { ok: false, error: "Coupon has already been redeemed" };
+    throw data(ALREADY_REDEEMED_MESSAGE, { status: 409 });
   }
 
-  const existingEnrollment = db
-    .select()
-    .from(enrollments)
-    .where(
-      and(
-        eq(enrollments.userId, userId),
-        eq(enrollments.courseId, coupon.courseId)
-      )
-    )
-    .get();
+  if (coupon.voidedAt !== null) {
+    throw data(VOIDED_MESSAGE, { status: 410 });
+  }
 
-  if (existingEnrollment) {
-    return { ok: false, error: "You are already enrolled in this course" };
+  if (isEnrolled(userId, coupon.courseId)) {
+    throw data("You are already enrolled in this course.", { status: 409 });
   }
 
   const purchase = db
@@ -74,28 +57,48 @@ function redeemCoupon(
     .get();
 
   if (purchase?.country && purchase.country !== userCountry) {
-    return {
-      ok: false,
-      error:
-        "This coupon can only be redeemed from the same country as the purchaser",
-    };
+    throw data(
+      "This coupon can only be redeemed from the same country as the purchaser.",
+      { status: 403 }
+    );
   }
 
-  db.update(coupons)
-    .set({
-      redeemedByUserId: userId,
-      redeemedAt: new Date().toISOString(),
-    })
-    .where(eq(coupons.id, coupon.id))
-    .run();
+  return db.transaction((tx) => {
+    const claimed = tx
+      .update(coupons)
+      .set({
+        redeemedByUserId: userId,
+        redeemedAt: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(coupons.id, coupon.id),
+          isNull(coupons.redeemedByUserId),
+          isNull(coupons.voidedAt)
+        )
+      )
+      .returning({ id: coupons.id })
+      .all();
 
-  const enrollment = db
-    .insert(enrollments)
-    .values({ userId, courseId: coupon.courseId })
-    .returning()
-    .get();
+    if (claimed.length === 0) {
+      // Voided or claimed between our read and our write.
+      const current = tx
+        .select({ voidedAt: coupons.voidedAt })
+        .from(coupons)
+        .where(eq(coupons.id, coupon.id))
+        .get();
+      if (current?.voidedAt) {
+        throw data(VOIDED_MESSAGE, { status: 410 });
+      }
+      throw data(ALREADY_REDEEMED_MESSAGE, { status: 409 });
+    }
 
-  return { ok: true, enrollment };
+    return tx
+      .insert(enrollments)
+      .values({ userId, courseId: coupon.courseId })
+      .returning()
+      .get();
+  });
 }
 
 const redeemParamsSchema = z.object({
@@ -135,11 +138,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
 
   const alreadyRedeemed = coupon.redeemedByUserId !== null;
-  const alreadyEnrolled = isUserEnrolled(currentUserId, coupon.courseId);
+  const voided = !alreadyRedeemed && coupon.voidedAt !== null;
+  const alreadyEnrolled = isEnrolled(currentUserId, coupon.courseId);
 
   // Check country mismatch upfront so we can show a clear message
   let countryMismatch = false;
-  if (!alreadyRedeemed && !alreadyEnrolled) {
+  if (!alreadyRedeemed && !voided && !alreadyEnrolled) {
     const userCountry = await resolveCountry(request);
     const purchase = db
       .select()
@@ -155,6 +159,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     course: { id: course.id, title: course.title, slug: course.slug },
     code,
     alreadyRedeemed,
+    voided,
     alreadyEnrolled,
     countryMismatch,
   };
@@ -176,13 +181,9 @@ export async function action({ params, request }: Route.ActionArgs) {
   }
 
   const userCountry = await resolveCountry(request);
-  const result = redeemCoupon(code, currentUserId, userCountry ?? "");
+  const enrollment = redeemCoupon(code, currentUserId, userCountry ?? "");
 
-  if (!result.ok) {
-    return data({ error: result.error }, { status: 400 });
-  }
-
-  const course = getCourseById(result.enrollment.courseId);
+  const course = getCourseById(enrollment.courseId);
   if (!course) {
     throw redirect("/courses");
   }
@@ -190,25 +191,21 @@ export async function action({ params, request }: Route.ActionArgs) {
   throw redirect(`/courses/${course.slug}/welcome`);
 }
 
-export default function Redeem({
-  loaderData,
-  actionData,
-}: Route.ComponentProps) {
-  const { course, code, alreadyRedeemed, alreadyEnrolled, countryMismatch } =
-    loaderData;
+export default function Redeem({ loaderData }: Route.ComponentProps) {
+  const {
+    course,
+    code,
+    alreadyRedeemed,
+    voided,
+    alreadyEnrolled,
+    countryMismatch,
+  } = loaderData;
   const fetcher = useFetcher();
   const isSubmitting = fetcher.state !== "idle";
 
-  useEffect(() => {
-    const error =
-      fetcher.data?.error ?? (actionData as { error?: string })?.error;
-    if (error) {
-      toast.error(error);
-    }
-  }, [fetcher.data, actionData]);
-
   // Determine which state to show
-  const canRedeem = !alreadyRedeemed && !alreadyEnrolled && !countryMismatch;
+  const canRedeem =
+    !alreadyRedeemed && !voided && !alreadyEnrolled && !countryMismatch;
 
   return (
     <div className="mx-auto max-w-2xl p-6 lg:p-8">
@@ -240,6 +237,19 @@ export default function Redeem({
               <p className="mt-2 text-sm text-muted-foreground">
                 Someone has already claimed this seat. Please ask the person who
                 shared this link for a new coupon.
+              </p>
+            </div>
+          ) : voided ? (
+            <div className="rounded-lg bg-destructive/10 p-4">
+              <div className="flex items-center justify-center gap-2 text-destructive">
+                <AlertCircle className="size-5" />
+                <span className="font-medium">
+                  This coupon can no longer be used
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The team licence it came with has been refunded, so its unused
+                seats were cancelled.
               </p>
             </div>
           ) : alreadyEnrolled ? (
