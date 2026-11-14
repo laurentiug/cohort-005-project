@@ -2725,7 +2725,7 @@ This course is still in draft while the cluster examples are rewritten against t
   );
 
   // ─── Liam's Refund Request ───
-  // One learner with an Open Refund Request. The dates count back from
+  // One learner with a Declined and an Open Refund Request. The dates count back from
   // today, so the fourteen-day refund window is still open whenever you seed.
 
   const liam = studentByEmail("liam@example.com");
@@ -2770,6 +2770,20 @@ This course is still in draft while the cluster examples are rewritten against t
       rating: 4,
       createdAt: daysAgo(6),
       updatedAt: daysAgo(6),
+    })
+    .run();
+  // His first Refund Request was Declined with a reason; a Declined request
+  // lets the learner ask again, which is why he has an Open one too.
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: liamPurchase.id,
+      status: RefundStatus.Declined,
+      reason: "Changed my mind.",
+      requestedAt: daysAgo(7),
+      resolvedAt: daysAgo(6),
+      resolvedByUserId: admin.id,
+      declineReason:
+        "Please tell us what about the course didn't work for you, so we can judge the request.",
     })
     .run();
   db.insert(schema.refunds)

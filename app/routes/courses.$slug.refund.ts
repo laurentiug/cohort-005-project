@@ -15,6 +15,7 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
 import { formatPrice } from "~/lib/utils";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
+import { sendEmail } from "~/lib/email.server";
 
 const REFUND_WINDOW_DAYS = 14;
 const MAX_WATCHED_HOURS = 2;
@@ -71,10 +72,7 @@ function lastDayOfWindow(purchasedAtIso: string): string {
   return calendarDay(deadline);
 }
 
-/**
- * The confirmation the learner gets in their inbox. There is no mail
- * transport wired up yet, so the built message goes to the server log.
- */
+/** The confirmation the learner gets in their inbox. */
 function buildRefundRequestEmail(input: {
   learnerName: string;
   learnerEmail: string;
@@ -181,15 +179,13 @@ export async function action({ params, request }: Route.ActionArgs) {
     .returning()
     .get();
 
-  const email = buildRefundRequestEmail({
-    learnerName: learner.name,
-    learnerEmail: learner.email,
-    courseTitle: course.title,
-    amount: purchase.amountPaid,
-  });
-
-  console.log(
-    `[email] to=${email.to} subject=${email.subject}\n${email.body}`
+  sendEmail(
+    buildRefundRequestEmail({
+      learnerName: learner.name,
+      learnerEmail: learner.email,
+      courseTitle: course.title,
+      amount: purchase.amountPaid,
+    })
   );
 
   return redirect("/settings");

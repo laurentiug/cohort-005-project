@@ -144,6 +144,31 @@ describe("Refund Requests loader — Open list", () => {
   });
 });
 
+describe("Refund Requests loader — an Admin's own Refund Request", () => {
+  // An Admin never decides a Refund Request about their own money, so the
+  // screen marks it (and shows no Approve / Decline buttons for it).
+  it("marks only the viewing Admin's own Refund Request as theirs", async () => {
+    const db = getTestDb();
+    for (const learner of [base.admin, base.user]) {
+      const purchase = addPurchase(db, {
+        userId: learner.id,
+        courseId: base.course.id,
+        amountPaid: 7900,
+      });
+      addRefundRequest(db, { purchaseId: purchase.id, reason: "Changed my mind." });
+    }
+
+    const { openRequests } = await callLoader(loader, PATH);
+
+    expect(
+      openRequests.map((r) => [r.learnerName, r.isOwnRequest])
+    ).toEqual([
+      ["Test Admin", true],
+      ["Test User", false],
+    ]);
+  });
+});
+
 describe("Refund Requests loader — Decided list", () => {
   // Decisions are final and must be traceable to a person, so the Decided
   // list always says what was decided, by whom, and when.
@@ -182,6 +207,7 @@ describe("Refund Requests loader — Decided list", () => {
       status: RefundStatus.Declined,
       resolvedAt: "2026-03-04T10:00:00.000Z",
       resolvedByUserId: otherAdmin.id,
+      declineReason: "You have finished the course.",
     });
 
     // Still Open: belongs in the other list, not this one.
@@ -200,6 +226,7 @@ describe("Refund Requests loader — Decided list", () => {
         decidedByName: "Other Admin",
         resolvedAt: "2026-03-04T10:00:00.000Z",
         amountRefunded: null,
+        declineReason: "You have finished the course.",
       }),
       expect.objectContaining({
         learnerName: "Ann",

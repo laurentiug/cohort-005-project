@@ -41,6 +41,7 @@ export function addRefundRequest(
     amountRefunded?: number | null;
     resolvedAt?: string | null;
     resolvedByUserId?: number | null;
+    declineReason?: string | null;
   }
 ) {
   return db.insert(schema.refunds).values(values).returning().get();
