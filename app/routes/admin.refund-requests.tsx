@@ -21,7 +21,7 @@ import {
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
-import { formatPrice } from "~/lib/utils";
+import { calendarDaysBetween, formatPrice } from "~/lib/utils";
 import { parseFormData } from "~/lib/validation";
 import { decideRefundRequest, requireAdmin } from "~/lib/refund-decisions.server";
 import {
@@ -38,18 +38,6 @@ export function meta() {
     { title: "Refund Requests — Cadence" },
     { name: "description", content: "Review learners' Refund Requests" },
   ];
-}
-
-/** Midnight at the start of the local calendar day `when` falls on. */
-function startOfDay(when: Date) {
-  return new Date(when.getFullYear(), when.getMonth(), when.getDate());
-}
-
-// Counted in calendar days, like the learner's 14-day window: a purchase made
-// at 23:00 is "1 day ago" the next morning. Math.round absorbs DST shifts.
-function calendarDaysBetween(fromIso: string, to: Date) {
-  const elapsed = startOfDay(to).getTime() - startOfDay(new Date(fromIso)).getTime();
-  return Math.max(0, Math.round(elapsed / 86_400_000));
 }
 
 function getOpenRefundRequests(now: Date, viewingAdminId: number) {
@@ -81,6 +69,7 @@ function getOpenRefundRequests(now: Date, viewingAdminId: number) {
     isOwnRequest: row.learnerId === viewingAdminId,
     // A team licence with a claimed seat can't be Approved, only Declined.
     hasClaimedSeat: hasClaimedSeat(row.purchaseId),
+    // Calendar days, like the learner's 14-day window.
     daysSincePurchase: calendarDaysBetween(row.purchasedAt, now),
     hoursWatched: getWatchedSeconds(row.learnerId, row.courseId) / 3600,
   }));
