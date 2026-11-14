@@ -327,16 +327,16 @@ describe("Approving a Refund Request on a team licence", () => {
       email: "colleague@example.com",
     });
     actAs(colleague);
-    const result = await callAction(
+    const thrown = await callAction(
       redeemAction,
       `/redeem/${codes[0].code}`,
       { intent: "confirm-redeem" },
       { code: codes[0].code }
-    );
+    ).catch((error: unknown) => error);
 
-    expect(result).toMatchObject({
-      init: { status: 400 },
-      data: { error: expect.stringMatching(/refunded/i) },
+    expect(thrown).toMatchObject({
+      init: { status: 410 },
+      data: expect.stringMatching(/refunded/i),
     });
     const colleagueEnrollment = db
       .select()
