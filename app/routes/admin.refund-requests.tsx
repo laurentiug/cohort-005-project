@@ -171,12 +171,7 @@ export async function action({ request }: Route.ActionArgs) {
       },
     });
 
-    sendEmail(
-      buildRefundApprovedEmail({
-        ...approved,
-        amountRefunded: approved.amountPaid,
-      })
-    );
+    sendEmail(buildRefundApprovedEmail(approved));
 
     return { success: true };
   }
@@ -190,7 +185,7 @@ export async function action({ request }: Route.ActionArgs) {
     decide: () => ({ declineReason: reason }),
   });
 
-  sendEmail(buildRefundDeclinedEmail({ ...declined, declineReason: reason }));
+  sendEmail(buildRefundDeclinedEmail(declined));
 
   return { success: true };
 }
