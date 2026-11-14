@@ -6,16 +6,16 @@ import { db } from "~/db";
 import {
   courses,
   coupons,
-  purchases,
   refunds,
   users,
   RefundStatus,
 } from "~/db/schema";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
 import { calendarDaysBetween, formatPrice } from "~/lib/utils";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
 import { sendEmail } from "~/lib/email.server";
+import { findLatestPurchase } from "~/lib/purchases.server";
 
 const REFUND_WINDOW_DAYS = 14;
 const MAX_WATCHED_HOURS = 2;
@@ -34,15 +34,6 @@ const refundActionSchema = z.object({
 
 function getCourseBySlug(slug: string) {
   return db.select().from(courses).where(eq(courses.slug, slug)).get();
-}
-
-function getLatestPurchase(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(purchases)
-    .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
-    .orderBy(sql`${purchases.createdAt} desc`)
-    .get();
 }
 
 function getOpenRefundRequest(purchaseId: number) {
@@ -105,7 +96,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("User not found", { status: 404 });
   }
 
-  const purchase = getLatestPurchase(currentUserId, course.id);
+  const purchase = findLatestPurchase(currentUserId, course.id);
 
   if (!purchase) {
     throw data("You have not bought this course.", { status: 403 });

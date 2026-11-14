@@ -1,11 +1,12 @@
 import { data } from "react-router";
-import { eq, and, desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "~/db";
-import { UserRole, users, courses, purchases } from "~/db/schema";
+import { UserRole, users, courses } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
 import { isEnrolled } from "~/lib/enrollments";
+import { findLatestPurchase } from "~/lib/purchases.server";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
@@ -13,17 +14,6 @@ function getUserById(id: number) {
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
-}
-
-// A learner who was refunded and bought again has several purchases; the
-// latest one is what their current access was bought with.
-function findPurchase(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(purchases)
-    .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
-    .orderBy(desc(purchases.id))
-    .get();
 }
 
 // ─── Access Resolution ───
@@ -91,7 +81,7 @@ export async function getAccess(
   };
 
   if (enrolled && !isStaff && course) {
-    const purchase = findPurchase(userId, courseId);
+    const purchase = findLatestPurchase(userId, courseId);
     const currentCountry = await resolveCountry(request);
     ppp = checkPppAccess(
       course.price,
