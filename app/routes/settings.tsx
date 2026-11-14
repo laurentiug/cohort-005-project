@@ -21,7 +21,7 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { and, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 
 const settingsSchema = z.object({
@@ -55,25 +55,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw data("User not found.", { status: 404 });
   }
 
-  const openRefundRequests = db
-    .select({
-      id: refunds.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      amountPaid: purchases.amountPaid,
-      reason: refunds.reason,
-      requestedAt: refunds.requestedAt,
-    })
-    .from(refunds)
-    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
-    .innerJoin(courses, eq(purchases.courseId, courses.id))
-    .where(
-      and(
-        eq(purchases.userId, currentUserId),
-        eq(refunds.status, RefundStatus.Open)
-      )
-    )
-    .all();
+  const refundRequestsByPurchase = getRefundRequestsByPurchase(currentUserId);
 
   return {
     user: {
@@ -83,8 +65,83 @@ export async function loader({ request }: Route.LoaderArgs) {
       bio: currentUser.bio,
       role: currentUser.role,
     },
-    openRefundRequests,
+    refundRequestsByPurchase,
   };
+}
+
+/**
+ * For each of the learner's purchases that has any Refund Request: the Open
+ * one (if any) and the latest decided one (by `resolvedAt`, if any). Older
+ * decisions are left out — the learner only needs the current outcome.
+ */
+function getRefundRequestsByPurchase(learnerId: number) {
+  const rows = db
+    .select({
+      id: refunds.id,
+      purchaseId: purchases.id,
+      courseTitle: courses.title,
+      courseSlug: courses.slug,
+      amountPaid: purchases.amountPaid,
+      status: refunds.status,
+      reason: refunds.reason,
+      requestedAt: refunds.requestedAt,
+      resolvedAt: refunds.resolvedAt,
+      declineReason: refunds.declineReason,
+      amountRefunded: refunds.amountRefunded,
+    })
+    .from(refunds)
+    .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
+    .innerJoin(courses, eq(purchases.courseId, courses.id))
+    .where(eq(purchases.userId, learnerId))
+    .orderBy(desc(purchases.id))
+    .all();
+
+  type Row = (typeof rows)[number];
+  const byPurchase = new Map<
+    number,
+    {
+      purchaseId: number;
+      courseTitle: string;
+      courseSlug: string;
+      amountPaid: number;
+      openRequest: Pick<Row, "id" | "reason" | "requestedAt"> | null;
+      latestDecision: Omit<
+        Row,
+        "purchaseId" | "courseTitle" | "courseSlug" | "amountPaid"
+      > | null;
+    }
+  >();
+
+  for (const row of rows) {
+    const { purchaseId, courseTitle, courseSlug, amountPaid, ...request } = row;
+    let entry = byPurchase.get(purchaseId);
+    if (!entry) {
+      entry = {
+        purchaseId,
+        courseTitle,
+        courseSlug,
+        amountPaid,
+        openRequest: null,
+        latestDecision: null,
+      };
+      byPurchase.set(purchaseId, entry);
+    }
+
+    if (request.status === RefundStatus.Open) {
+      entry.openRequest = {
+        id: request.id,
+        reason: request.reason,
+        requestedAt: request.requestedAt,
+      };
+    } else if (
+      !entry.latestDecision ||
+      (request.resolvedAt ?? "") > (entry.latestDecision.resolvedAt ?? "")
+    ) {
+      entry.latestDecision = request;
+    }
+  }
+
+  return [...byPurchase.values()];
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -122,7 +179,10 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, openRefundRequests } = loaderData;
+  const { user, refundRequestsByPurchase } = loaderData;
+  const openCount = refundRequestsByPurchase.filter(
+    (purchase) => purchase.openRequest
+  ).length;
   const fetcher = useFetcher();
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -209,35 +269,58 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
         </CardContent>
       </Card>
 
-      {openRefundRequests.length > 0 && (
+      {refundRequestsByPurchase.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
             <h2 className="text-lg font-semibold">Refund Requests</h2>
             <p className="text-sm text-muted-foreground">
-              {openRefundRequests.length === 1
-                ? "One refund request is waiting on us."
-                : `${openRefundRequests.length} refund requests are waiting on us.`}
+              {openCount === 0
+                ? "None of your refund requests are waiting on us."
+                : openCount === 1
+                  ? "One refund request is waiting on us."
+                  : `${openCount} refund requests are waiting on us.`}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {openRefundRequests.map((refundRequest) => (
-              <div key={refundRequest.id} className="rounded-md border p-3">
+            {refundRequestsByPurchase.map((purchase) => (
+              <div key={purchase.purchaseId} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <Link
-                    to={`/courses/${refundRequest.courseSlug}`}
+                    to={`/courses/${purchase.courseSlug}`}
                     className="font-medium hover:underline"
                   >
-                    {refundRequest.courseTitle}
+                    {purchase.courseTitle}
                   </Link>
-                  <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                    Open
-                  </span>
+                  {purchase.openRequest && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                      Open
+                    </span>
+                  )}
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {formatPrice(refundRequest.amountPaid)} · raised{" "}
-                  {new Date(refundRequest.requestedAt).toLocaleDateString()}
-                </p>
-                <p className="mt-2 text-sm">{refundRequest.reason}</p>
+                {purchase.openRequest && (
+                  <>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {formatPrice(purchase.amountPaid)} · raised{" "}
+                      {new Date(
+                        purchase.openRequest.requestedAt
+                      ).toLocaleDateString()}
+                    </p>
+                    <p className="mt-2 text-sm">{purchase.openRequest.reason}</p>
+                  </>
+                )}
+                {purchase.latestDecision && (
+                  <p
+                    className={
+                      purchase.openRequest
+                        ? "mt-3 border-t pt-3 text-sm text-muted-foreground"
+                        : "mt-1 text-sm"
+                    }
+                  >
+                    {purchase.latestDecision.status === RefundStatus.Approved
+                      ? `Approved — your refund of ${formatPrice(purchase.latestDecision.amountRefunded ?? purchase.amountPaid)} is on its way`
+                      : `Declined: ${purchase.latestDecision.declineReason ?? ""}`}
+                  </p>
+                )}
               </div>
             ))}
           </CardContent>
