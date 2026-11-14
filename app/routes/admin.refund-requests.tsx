@@ -1,10 +1,10 @@
-import { data, isRouteErrorResponse, Link } from "react-router";
+import { useState } from "react";
+import { data, isRouteErrorResponse, Link, useFetcher } from "react-router";
+import { z } from "zod";
 import { AlertTriangle, ReceiptText } from "lucide-react";
 import type { Route } from "./+types/admin.refund-requests";
-import { getCurrentUserId } from "~/lib/session";
 import {
   RefundStatus,
-  UserRole,
   courses,
   purchases,
   refunds,
@@ -15,18 +15,19 @@ import { asc, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
 import { formatPrice } from "~/lib/utils";
+import { parseFormData } from "~/lib/validation";
+import { decideRefundRequest, requireAdmin } from "~/lib/refund-decisions.server";
+import { buildRefundDeclinedEmail } from "~/lib/refund-emails.server";
+import { sendEmail } from "~/lib/email.server";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
+import { Textarea } from "~/components/ui/textarea";
 
 export function meta() {
   return [
     { title: "Refund Requests — Cadence" },
     { name: "description", content: "Review learners' Refund Requests" },
   ];
-}
-
-function getUserById(id: number) {
-  return db.select().from(users).where(eq(users.id, id)).get();
 }
 
 /** Midnight at the start of the local calendar day `when` falls on. */
@@ -41,7 +42,7 @@ function calendarDaysBetween(fromIso: string, to: Date) {
   return Math.max(0, Math.round(elapsed / 86_400_000));
 }
 
-function getOpenRefundRequests(now: Date) {
+function getOpenRefundRequests(now: Date, viewingAdminId: number) {
   const rows = db
     .select({
       id: refunds.id,
@@ -66,6 +67,8 @@ function getOpenRefundRequests(now: Date) {
 
   return rows.map((row) => ({
     ...row,
+    // An Admin never decides their own Refund Request: no buttons for it.
+    isOwnRequest: row.learnerId === viewingAdminId,
     daysSincePurchase: calendarDaysBetween(row.purchasedAt, now),
     hoursWatched: getWatchedSeconds(row.learnerId, row.courseId) / 3600,
   }));
@@ -80,6 +83,7 @@ function getDecidedRefundRequests() {
       status: refunds.status,
       reason: refunds.reason,
       amountRefunded: refunds.amountRefunded,
+      declineReason: refunds.declineReason,
       requestedAt: refunds.requestedAt,
       resolvedAt: refunds.resolvedAt,
       decidedByName: decider.name,
@@ -98,24 +102,48 @@ function getDecidedRefundRequests() {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to review refund requests.", {
-      status: 401,
-    });
-  }
-
-  const currentUser = getUserById(currentUserId);
-
-  if (!currentUser || currentUser.role !== UserRole.Admin) {
-    throw data("Only admins can access this page.", { status: 403 });
-  }
+  const admin = await requireAdmin(request);
 
   return {
-    openRequests: getOpenRefundRequests(new Date()),
+    openRequests: getOpenRefundRequests(new Date(), admin.id),
     decidedRequests: getDecidedRefundRequests(),
   };
+}
+
+const refundRequestActionSchema = z.discriminatedUnion("intent", [
+  z.object({
+    intent: z.literal("decline"),
+    refundRequestId: z.coerce.number().int(),
+    reason: z
+      .string()
+      .trim()
+      .min(1, "Tell the learner why their Refund Request is declined.")
+      .max(1000, "Please keep the reason under 1000 characters."),
+  }),
+]);
+
+export async function action({ request }: Route.ActionArgs) {
+  const admin = await requireAdmin(request);
+
+  const formData = await request.formData();
+  const parsed = parseFormData(formData, refundRequestActionSchema);
+
+  if (!parsed.success) {
+    return data({ errors: parsed.errors }, { status: 400 });
+  }
+
+  const { reason, refundRequestId } = parsed.data;
+
+  const declined = decideRefundRequest({
+    refundRequestId,
+    admin,
+    outcome: RefundStatus.Declined,
+    decide: () => ({ declineReason: reason }),
+  });
+
+  sendEmail(buildRefundDeclinedEmail({ ...declined, declineReason: reason }));
+
+  return { success: true };
 }
 
 function formatDateTime(iso: string | null) {
@@ -188,6 +216,7 @@ export default function AdminRefundRequests({
                     <th className={thClass}>Requested</th>
                     <th className={thClass}>Days since purchase</th>
                     <th className={thClass}>Hours watched</th>
+                    <th className={thClass}>Decision</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -215,6 +244,15 @@ export default function AdminRefundRequests({
                       <td className={tdClass}>{request.daysSincePurchase}</td>
                       <td className={tdClass}>
                         {formatHours(request.hoursWatched)}
+                      </td>
+                      <td className={tdClass}>
+                        {request.isOwnRequest ? (
+                          <span className="text-muted-foreground">
+                            Your own request — another Admin decides it
+                          </span>
+                        ) : (
+                          <DeclineForm refundRequestId={request.id} />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -244,7 +282,7 @@ export default function AdminRefundRequests({
                     <th className={thClass}>Learner</th>
                     <th className={thClass}>Course</th>
                     <th className={thClass}>Outcome</th>
-                    <th className={thClass}>Refund</th>
+                    <th className={thClass}>Refund or reason</th>
                     <th className={thClass}>Decided by</th>
                     <th className={thClass}>Decided</th>
                   </tr>
@@ -263,10 +301,12 @@ export default function AdminRefundRequests({
                       </td>
                       <td className={tdClass}>{request.courseTitle}</td>
                       <td className={tdClass}>{outcomeLabel[request.status]}</td>
-                      <td className={tdClass}>
-                        {request.amountRefunded != null
-                          ? formatPrice(request.amountRefunded)
-                          : "—"}
+                      <td className={`${tdClass} max-w-sm whitespace-pre-wrap`}>
+                        {request.status === RefundStatus.Declined
+                          ? (request.declineReason ?? "—")
+                          : request.amountRefunded != null
+                            ? formatPrice(request.amountRefunded)
+                            : "—"}
                       </td>
                       <td className={tdClass}>{request.decidedByName ?? "—"}</td>
                       <td className={tdClass}>
@@ -281,6 +321,60 @@ export default function AdminRefundRequests({
         </Card>
       )}
     </div>
+  );
+}
+
+/** Decline opens a form asking for the reason the learner will be sent. */
+function DeclineForm({ refundRequestId }: { refundRequestId: number }) {
+  const fetcher = useFetcher<typeof action>();
+  const [open, setOpen] = useState(false);
+  const busy = fetcher.state !== "idle";
+  const errors =
+    fetcher.data && "errors" in fetcher.data ? fetcher.data.errors : undefined;
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+        Decline
+      </Button>
+    );
+  }
+
+  return (
+    <fetcher.Form method="post" className="w-64 space-y-2">
+      <input type="hidden" name="intent" value="decline" />
+      <input type="hidden" name="refundRequestId" value={refundRequestId} />
+      <label
+        htmlFor={`decline-reason-${refundRequestId}`}
+        className="text-xs font-medium"
+      >
+        Reason (sent to the learner)
+      </label>
+      <Textarea
+        id={`decline-reason-${refundRequestId}`}
+        name="reason"
+        required
+        maxLength={1000}
+        aria-invalid={errors?.reason ? true : undefined}
+      />
+      {errors?.reason && (
+        <p className="text-xs text-destructive">{errors.reason}</p>
+      )}
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" variant="destructive" disabled={busy}>
+          {busy ? "Declining…" : "Decline"}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+          disabled={busy}
+        >
+          Cancel
+        </Button>
+      </div>
+    </fetcher.Form>
   );
 }
 
