@@ -10,6 +10,7 @@ import {
 import type { Route } from "./+types/instructor.$courseId";
 import { getCurrentUserId } from "~/lib/session";
 import { CourseStatus, UserRole } from "~/db/schema";
+import { activeEnrollment } from "~/lib/enrollments";
 import { db } from "~/db";
 import {
   courses,
@@ -360,7 +361,7 @@ function getEnrollmentCountForCourse(courseId: number) {
   const result = db
     .select({ count: sql<number>`count(*)` })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .get();
 
   return result?.count ?? 0;
@@ -375,7 +376,7 @@ function getCourseEnrolledStudents(courseId: number) {
       completedAt: enrollments.completedAt,
     })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .all();
 }
 

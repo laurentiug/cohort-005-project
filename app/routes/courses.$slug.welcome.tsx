@@ -9,6 +9,7 @@ import {
   lessons,
   enrollments,
 } from "~/db/schema";
+import { activeEnrollmentOf } from "~/lib/enrollments";
 import { eq, and, or } from "drizzle-orm";
 import { getCurrentUserId } from "~/lib/session";
 import { Button } from "~/components/ui/button";
@@ -81,9 +82,7 @@ function isUserEnrolled(userId: number, courseId: number) {
   const enrollment = db
     .select()
     .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
+    .where(activeEnrollmentOf(userId, courseId))
     .get();
   return !!enrollment;
 }

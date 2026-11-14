@@ -12,6 +12,7 @@ import {
   users,
   LessonProgressStatus,
 } from "~/db/schema";
+import { activeEnrollmentOf } from "~/lib/enrollments";
 import { and, eq, or } from "drizzle-orm";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -115,9 +116,7 @@ function isUserEnrolled(userId: number, courseId: number) {
   const existing = db
     .select()
     .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
+    .where(activeEnrollmentOf(userId, courseId))
     .get();
 
   return !!existing;

@@ -1,16 +1,11 @@
 import { data } from "react-router";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "~/db";
-import {
-  UserRole,
-  users,
-  courses,
-  enrollments,
-  purchases,
-} from "~/db/schema";
+import { UserRole, users, courses, enrollments, purchases } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
+import { activeEnrollmentOf } from "~/lib/enrollments";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
@@ -24,9 +19,7 @@ function findEnrollment(userId: number, courseId: number) {
   return db
     .select()
     .from(enrollments)
-    .where(
-      and(eq(enrollments.userId, userId), eq(enrollments.courseId, courseId))
-    )
+    .where(activeEnrollmentOf(userId, courseId))
     .get();
 }
 
@@ -34,11 +27,14 @@ function isUserEnrolled(userId: number, courseId: number) {
   return !!findEnrollment(userId, courseId);
 }
 
+// A learner who was refunded and bought again has several purchases; the
+// latest one is what their current access was bought with.
 function findPurchase(userId: number, courseId: number) {
   return db
     .select()
     .from(purchases)
     .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
+    .orderBy(desc(purchases.id))
     .get();
 }
 

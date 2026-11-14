@@ -13,6 +13,7 @@ import {
   CourseStatus,
   LessonProgressStatus,
 } from "~/db/schema";
+import { activeEnrollment } from "~/lib/enrollments";
 import { eq, like, and, or, sql, inArray } from "drizzle-orm";
 import { Card, CardContent, CardFooter, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -127,7 +128,7 @@ function getUserEnrolledCourses(userId: number) {
     })
     .from(enrollmentsTable)
     .innerJoin(coursesTable, eq(enrollmentsTable.courseId, coursesTable.id))
-    .where(eq(enrollmentsTable.userId, userId))
+    .where(and(eq(enrollmentsTable.userId, userId), activeEnrollment()))
     .all();
 }
 

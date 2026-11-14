@@ -19,9 +19,10 @@ import {
 import { CourseImage } from "~/components/course-image";
 import { data, isRouteErrorResponse } from "react-router";
 import { CourseStatus, UserRole } from "~/db/schema";
+import { activeEnrollment } from "~/lib/enrollments";
 import { db } from "~/db";
 import { users, courses, modules, lessons, enrollments } from "~/db/schema";
-import { eq, or, sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 
 function getUserById(id: number) {
   return db.select().from(users).where(eq(users.id, id)).get();
@@ -57,7 +58,7 @@ function getEnrollmentCountForCourse(courseId: number) {
   const result = db
     .select({ count: sql<number>`count(*)` })
     .from(enrollments)
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
     .get();
 
   return result?.count ?? 0;
