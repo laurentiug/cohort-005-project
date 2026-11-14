@@ -15,12 +15,13 @@ import { db } from "~/db";
 import { activeEnrollmentOf } from "~/lib/enrollments";
 import {
   hasClaimedSeat,
+  isTeamLicence,
   voidUnclaimedSeats,
 } from "~/lib/seat-codes.server";
 import { asc, desc, eq, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
-import { formatPrice } from "~/lib/utils";
+import { calendarDaysBetween, formatPrice } from "~/lib/utils";
 import { parseFormData } from "~/lib/validation";
 import { decideRefundRequest, requireAdmin } from "~/lib/refund-decisions.server";
 import {
@@ -37,18 +38,6 @@ export function meta() {
     { title: "Refund Requests — Cadence" },
     { name: "description", content: "Review learners' Refund Requests" },
   ];
-}
-
-/** Midnight at the start of the local calendar day `when` falls on. */
-function startOfDay(when: Date) {
-  return new Date(when.getFullYear(), when.getMonth(), when.getDate());
-}
-
-// Counted in calendar days, like the learner's 14-day window: a purchase made
-// at 23:00 is "1 day ago" the next morning. Math.round absorbs DST shifts.
-function calendarDaysBetween(fromIso: string, to: Date) {
-  const elapsed = startOfDay(to).getTime() - startOfDay(new Date(fromIso)).getTime();
-  return Math.max(0, Math.round(elapsed / 86_400_000));
 }
 
 function getOpenRefundRequests(now: Date, viewingAdminId: number) {
@@ -80,6 +69,7 @@ function getOpenRefundRequests(now: Date, viewingAdminId: number) {
     isOwnRequest: row.learnerId === viewingAdminId,
     // A team licence with a claimed seat can't be Approved, only Declined.
     hasClaimedSeat: hasClaimedSeat(row.purchaseId),
+    // Calendar days, like the learner's 14-day window.
     daysSincePurchase: calendarDaysBetween(row.purchasedAt, now),
     hoursWatched: getWatchedSeconds(row.learnerId, row.courseId) / 3600,
   }));
@@ -163,26 +153,25 @@ export async function action({ request }: Route.ActionArgs) {
           );
         }
 
-        // Access ends right away. The row is kept, not deleted (ADR 0001),
-        // and lesson progress is untouched for if they buy again.
-        tx.update(enrollments)
-          .set({ revokedAt: new Date().toISOString() })
-          .where(activeEnrollmentOf(request.learnerId, request.courseId))
-          .run();
-
-        // On a team licence, nobody can claim a seat that has been refunded.
-        voidUnclaimedSeats(request.purchaseId, tx);
+        if (isTeamLicence(request.purchaseId, tx)) {
+          // A team licence gave the buyer no enrollment, so there is none to
+          // revoke (any they have came from a separate purchase). Nobody can
+          // claim a seat that has been refunded.
+          voidUnclaimedSeats(request.purchaseId, tx);
+        } else {
+          // Access ends right away. The row is kept, not deleted (ADR 0001),
+          // and lesson progress is untouched for if they buy again.
+          tx.update(enrollments)
+            .set({ revokedAt: new Date().toISOString() })
+            .where(activeEnrollmentOf(request.learnerId, request.courseId))
+            .run();
+        }
 
         return { amountRefunded: request.amountPaid };
       },
     });
 
-    sendEmail(
-      buildRefundApprovedEmail({
-        ...approved,
-        amountRefunded: approved.amountPaid,
-      })
-    );
+    sendEmail(buildRefundApprovedEmail(approved));
 
     return { success: true };
   }
@@ -196,7 +185,7 @@ export async function action({ request }: Route.ActionArgs) {
     decide: () => ({ declineReason: reason }),
   });
 
-  sendEmail(buildRefundDeclinedEmail({ ...declined, declineReason: reason }));
+  sendEmail(buildRefundDeclinedEmail(declined));
 
   return { success: true };
 }

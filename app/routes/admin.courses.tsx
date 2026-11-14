@@ -11,12 +11,11 @@ import {
   courses,
   modules,
   lessons,
-  enrollments,
   users,
 } from "~/db/schema";
-import { activeEnrollment } from "~/lib/enrollments";
+import { countActiveEnrollments } from "~/lib/enrollments";
 import { db } from "~/db";
-import { and, eq, or, sql } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { Card, CardContent } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -64,16 +63,6 @@ function getLessonCountForCourse(courseId: number) {
   return count?.count ?? 0;
 }
 
-function getEnrollmentCountForCourse(courseId: number) {
-  const result = db
-    .select({ count: sql<number>`count(*)` })
-    .from(enrollments)
-    .where(and(eq(enrollments.courseId, courseId), activeEnrollment()))
-    .get();
-
-  return result?.count ?? 0;
-}
-
 function updateCourseStatus(id: number, status: CourseStatus) {
   return db
     .update(courses)
@@ -112,7 +101,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const coursesWithDetails = allCourses.map((course) => ({
     ...course,
     lessonCount: getLessonCountForCourse(course.id),
-    enrollmentCount: getEnrollmentCountForCourse(course.id),
+    enrollmentCount: countActiveEnrollments(course.id),
   }));
 
   return { courses: coursesWithDetails };

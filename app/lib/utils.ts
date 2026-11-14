@@ -20,6 +20,22 @@ export function daysSince(iso: string): number {
   return Math.max(0, Math.floor(elapsed / 86_400_000));
 }
 
+/** Midnight at the start of the local calendar day `when` falls on. */
+function startOfDay(when: Date) {
+  return new Date(when.getFullYear(), when.getMonth(), when.getDate());
+}
+
+/**
+ * Whole calendar days from `fromIso` to `to`, counted by local date rather
+ * than elapsed hours: something at 23:00 is "1 day" before the next morning.
+ * Math.round absorbs DST shifts. Negative values clamp to 0.
+ */
+export function calendarDaysBetween(fromIso: string, to: Date): number {
+  const elapsed =
+    startOfDay(to).getTime() - startOfDay(new Date(fromIso)).getTime();
+  return Math.max(0, Math.round(elapsed / 86_400_000));
+}
+
 /**
  * A short "how long ago" label — "just now", "5m ago", "3h ago", "2d ago",
  * falling back to an absolute date beyond a month.

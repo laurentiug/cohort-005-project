@@ -71,23 +71,43 @@ export const sessionModule = {
 
 const BASE_URL = "http://localhost:3000";
 
-// Route args carry more than tests care about (context, matches, ...); the
-// loaders and actions here only read `request` and `params`.
-type RouteFn = (args: any) => unknown;
+/**
+ * The route args a test builds. Real route args carry more (matches, ...),
+ * but the loaders and actions under test only read `request` and `params`.
+ */
+export type TestRouteArgs = {
+  request: Request;
+  params: Record<string, string>;
+  context: Record<string, never>;
+};
 
-export function callLoader<F extends RouteFn>(
-  loader: F,
+/** A loader or action, typed with its route's generated args. */
+type RouteFn<Args extends { request: Request }, Result> = (
+  args: Args
+) => Result;
+
+function invoke<Args extends { request: Request }, Result>(
+  fn: RouteFn<Args, Result>,
+  args: TestRouteArgs
+) {
+  // `Args` is the route's full generated args type; the test supplies only
+  // the part the route reads.
+  return Promise.resolve(fn(args as unknown as Args)) as Promise<
+    Awaited<Result>
+  >;
+}
+
+export function callLoader<Args extends { request: Request }, Result>(
+  loader: RouteFn<Args, Result>,
   path: string,
   params: Record<string, string> = {}
 ) {
   const request = new Request(new URL(path, BASE_URL));
-  return Promise.resolve(
-    loader({ request, params, context: {} } as Parameters<F>[0])
-  ) as Promise<Awaited<ReturnType<F>>>;
+  return invoke(loader, { request, params, context: {} });
 }
 
-export function callAction<F extends RouteFn>(
-  action: F,
+export function callAction<Args extends { request: Request }, Result>(
+  action: RouteFn<Args, Result>,
   path: string,
   form: Record<string, string>,
   params: Record<string, string> = {}
@@ -96,9 +116,7 @@ export function callAction<F extends RouteFn>(
     method: "POST",
     body: new URLSearchParams(form),
   });
-  return Promise.resolve(
-    action({ request, params, context: {} } as Parameters<F>[0])
-  ) as Promise<Awaited<ReturnType<F>>>;
+  return invoke(action, { request, params, context: {} });
 }
 
 /**

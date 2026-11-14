@@ -113,7 +113,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       });
     }
     const entry = courseMap.get(coupon.courseId)!;
-    // A refunded seat no longer exists for the team.
+    // An unusable seat (its licence was refunded) no longer counts for the team.
     if (coupon.voidedAt === null) {
       entry.total++;
     }
@@ -304,7 +304,7 @@ export default function Team({ loaderData }: Route.ComponentProps) {
                         </span>
                       ) : coupon.voided ? (
                         <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                          Refunded
+                          Unusable
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">

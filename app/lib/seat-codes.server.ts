@@ -4,11 +4,24 @@
  * be refunded; once it is refunded, the unclaimed seats can't be claimed.
  */
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
-import { db } from "~/db";
+import { db, type Transaction } from "~/db";
 import { coupons } from "~/db/schema";
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Executor = typeof db | Transaction;
+
+/**
+ * Was this purchase a team licence (it bought seat codes)? A team licence
+ * gives the buyer no enrollment of their own; only redeemed seats do.
+ */
+export function isTeamLicence(purchaseId: number, executor: Executor = db) {
+  const seat = executor
+    .select({ id: coupons.id })
+    .from(coupons)
+    .where(eq(coupons.purchaseId, purchaseId))
+    .get();
+
+  return !!seat;
+}
 
 /** Has anyone redeemed a seat code bought with this purchase? */
 export function hasClaimedSeat(purchaseId: number, executor: Executor = db) {

@@ -327,16 +327,16 @@ describe("Approving a Refund Request on a team licence", () => {
       email: "colleague@example.com",
     });
     actAs(colleague);
-    const result = await callAction(
+    const thrown = await callAction(
       redeemAction,
       `/redeem/${codes[0].code}`,
       { intent: "confirm-redeem" },
       { code: codes[0].code }
-    );
+    ).catch((error: unknown) => error);
 
-    expect(result).toMatchObject({
-      init: { status: 400 },
-      data: { error: expect.stringMatching(/refunded/i) },
+    expect(thrown).toMatchObject({
+      init: { status: 410 },
+      data: expect.stringMatching(/refunded/i),
     });
     const colleagueEnrollment = db
       .select()
@@ -344,6 +344,43 @@ describe("Approving a Refund Request on a team licence", () => {
       .where(eq(enrollments.userId, colleague.id))
       .get();
     expect(colleagueEnrollment).toBeUndefined();
+  });
+
+  // A team licence gives the buyer no access of their own, so refunding it
+  // must not take away access the buyer paid for separately.
+  it("keeps the buyer's enrollment from a separate personal purchase", async () => {
+    const db = getTestDb();
+    addPurchase(db, {
+      userId: base.user.id,
+      courseId: base.course.id,
+      amountPaid: 7900,
+    });
+    addEnrollment(db, { userId: base.user.id, courseId: base.course.id });
+    const teamPurchase = addPurchase(db, {
+      userId: base.user.id,
+      courseId: base.course.id,
+      amountPaid: 3 * 7900,
+    });
+    addTeamLicence(db, {
+      purchaseId: teamPurchase.id,
+      courseId: base.course.id,
+      seats: 3,
+    });
+    const request = addRefundRequest(db, {
+      purchaseId: teamPurchase.id,
+      reason: "We bought more seats than the team needs.",
+    });
+
+    await approve(request.id);
+
+    expect(refundRequest(request.id)?.status).toBe(RefundStatus.Approved);
+    const rows = db
+      .select()
+      .from(enrollments)
+      .where(eq(enrollments.userId, base.user.id))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].revokedAt).toBeNull();
   });
 
   it("is available while no seat has been claimed", async () => {

@@ -14,7 +14,7 @@
  */
 import { data } from "react-router";
 import { and, eq } from "drizzle-orm";
-import { db } from "~/db";
+import { db, type Transaction } from "~/db";
 import {
   RefundStatus,
   UserRole,
@@ -49,7 +49,6 @@ export async function requireAdmin(request: Request) {
   return currentUser;
 }
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** What a decision needs to know about the Refund Request being decided. */
 export type RefundRequestToDecide = {
@@ -106,14 +105,15 @@ function alreadyDecided() {
  * to refuse, may make its own writes through `tx`, and returns the extra
  * columns to store with the decision.
  *
- * Returns the Refund Request as it was before the decision, for the email.
+ * Returns the Refund Request as it was before the decision, merged with what
+ * `decide` returned, for the email.
  */
-export function decideRefundRequest(input: {
+export function decideRefundRequest<Fields extends DecisionFields>(input: {
   refundRequestId: number;
   admin: { id: number };
   outcome: RefundStatus.Approved | RefundStatus.Declined;
-  decide: (tx: Transaction, request: RefundRequestToDecide) => DecisionFields;
-}): RefundRequestToDecide {
+  decide: (tx: Transaction, request: RefundRequestToDecide) => Fields;
+}): RefundRequestToDecide & Fields {
   return db.transaction((tx) => {
     const request = findRefundRequest(tx, input.refundRequestId);
 
@@ -156,6 +156,6 @@ export function decideRefundRequest(input: {
       throw alreadyDecided();
     }
 
-    return request;
+    return { ...request, ...fields };
   });
 }

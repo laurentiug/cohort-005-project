@@ -7,10 +7,9 @@ import {
   users,
   modules,
   lessons,
-  enrollments,
 } from "~/db/schema";
-import { activeEnrollmentOf } from "~/lib/enrollments";
-import { eq, and, or } from "drizzle-orm";
+import { isEnrolled } from "~/lib/enrollments";
+import { eq, or } from "drizzle-orm";
 import { getCurrentUserId } from "~/lib/session";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -78,15 +77,6 @@ function getCourseWithDetails(id: number) {
   };
 }
 
-function isUserEnrolled(userId: number, courseId: number) {
-  const enrollment = db
-    .select()
-    .from(enrollments)
-    .where(activeEnrollmentOf(userId, courseId))
-    .get();
-  return !!enrollment;
-}
-
 export function meta({ loaderData }: Route.MetaArgs) {
   const title = loaderData?.course?.title ?? "Welcome";
   return [
@@ -108,7 +98,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw redirect(`/courses/${slug}`);
   }
 
-  if (!isUserEnrolled(currentUserId, course.id)) {
+  if (!isEnrolled(currentUserId, course.id)) {
     throw redirect(`/courses/${slug}`);
   }
 

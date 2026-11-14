@@ -6,16 +6,16 @@ import { db } from "~/db";
 import {
   courses,
   coupons,
-  purchases,
   refunds,
   users,
   RefundStatus,
 } from "~/db/schema";
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { parseFormData, parseParams } from "~/lib/validation";
-import { formatPrice } from "~/lib/utils";
+import { calendarDaysBetween, formatPrice } from "~/lib/utils";
 import { getWatchedSeconds } from "~/lib/watched-time.server";
 import { sendEmail } from "~/lib/email.server";
+import { findLatestPurchase } from "~/lib/purchases.server";
 
 const REFUND_WINDOW_DAYS = 14;
 const MAX_WATCHED_HOURS = 2;
@@ -36,15 +36,6 @@ function getCourseBySlug(slug: string) {
   return db.select().from(courses).where(eq(courses.slug, slug)).get();
 }
 
-function getLatestPurchase(userId: number, courseId: number) {
-  return db
-    .select()
-    .from(purchases)
-    .where(and(eq(purchases.userId, userId), eq(purchases.courseId, courseId)))
-    .orderBy(sql`${purchases.createdAt} desc`)
-    .get();
-}
-
 function getOpenRefundRequest(purchaseId: number) {
   return db
     .select()
@@ -56,20 +47,6 @@ function getOpenRefundRequest(purchaseId: number) {
       )
     )
     .get();
-}
-
-// The fourteen-day window is counted in whole days, not hours — someone who
-// buys at 23:00 should still get the whole of their fourteenth day.
-function calendarDay(when: Date): string {
-  const month = String(when.getMonth() + 1).padStart(2, "0");
-  const day = String(when.getDate()).padStart(2, "0");
-  return `${when.getFullYear()}-${month}-${day}`;
-}
-
-function lastDayOfWindow(purchasedAtIso: string): string {
-  const deadline = new Date(purchasedAtIso);
-  deadline.setDate(deadline.getDate() + REFUND_WINDOW_DAYS);
-  return calendarDay(deadline);
 }
 
 /** The confirmation the learner gets in their inbox. */
@@ -119,7 +96,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("User not found", { status: 404 });
   }
 
-  const purchase = getLatestPurchase(currentUserId, course.id);
+  const purchase = findLatestPurchase(currentUserId, course.id);
 
   if (!purchase) {
     throw data("You have not bought this course.", { status: 403 });
@@ -145,8 +122,10 @@ export async function action({ params, request }: Route.ActionArgs) {
     throw data("A claimed team seat cannot be refunded.", { status: 403 });
   }
 
-  const today = calendarDay(new Date());
-  const withinRefundWindow = today <= lastDayOfWindow(purchase.createdAt);
+  // The window is counted in whole calendar days, not hours — someone who
+  // buys at 23:00 should still get the whole of their fourteenth day.
+  const withinRefundWindow =
+    calendarDaysBetween(purchase.createdAt, new Date()) <= REFUND_WINDOW_DAYS;
 
   if (!withinRefundWindow) {
     throw data(`The ${REFUND_WINDOW_DAYS}-day window has closed.`, {
