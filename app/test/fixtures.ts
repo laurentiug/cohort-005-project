@@ -3,6 +3,7 @@
  * (use `getTestDb()` from the route harness) and returns the inserted row.
  * Timestamps are ISO strings, like the live data.
  */
+import { eq } from "drizzle-orm";
 import * as schema from "~/db/schema";
 import type { createTestDb } from "./setup";
 
@@ -69,6 +70,44 @@ export function addWatchEvent(
   return db
     .insert(schema.videoWatchEvents)
     .values({ eventType: "progress", ...values })
+    .returning()
+    .get();
+}
+
+export function addEnrollment(
+  db: TestDb,
+  values: { userId: number; courseId: number }
+) {
+  return db.insert(schema.enrollments).values(values).returning().get();
+}
+
+/** A team with `seats` unclaimed seat codes on one purchase of the course. */
+export function addTeamLicence(
+  db: TestDb,
+  values: { purchaseId: number; courseId: number; seats: number }
+) {
+  const team = db.insert(schema.teams).values({}).returning().get();
+  const codes = Array.from({ length: values.seats }, (_, i) =>
+    db
+      .insert(schema.coupons)
+      .values({
+        teamId: team.id,
+        courseId: values.courseId,
+        purchaseId: values.purchaseId,
+        code: `SEAT-${values.purchaseId}-${i + 1}`,
+      })
+      .returning()
+      .get()
+  );
+  return { team, codes };
+}
+
+/** Marks a seat code as claimed by `userId`, as redeeming it would. */
+export function claimSeat(db: TestDb, couponId: number, userId: number) {
+  return db
+    .update(schema.coupons)
+    .set({ redeemedByUserId: userId, redeemedAt: new Date().toISOString() })
+    .where(eq(schema.coupons.id, couponId))
     .returning()
     .get();
 }

@@ -60,6 +60,8 @@ interface CouponRow {
   courseId: number;
   courseTitle: string;
   redeemedByEmail: string | null;
+  /** The team licence was refunded before anyone claimed this seat. */
+  voided: boolean;
   createdAt: string;
 }
 
@@ -111,7 +113,10 @@ export async function loader({ request }: Route.LoaderArgs) {
       });
     }
     const entry = courseMap.get(coupon.courseId)!;
-    entry.total++;
+    // A refunded seat no longer exists for the team.
+    if (coupon.voidedAt === null) {
+      entry.total++;
+    }
     if (coupon.redeemedByUserId !== null) {
       entry.claimed++;
     }
@@ -141,6 +146,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       courseId: coupon.courseId,
       courseTitle: course?.title ?? "Unknown Course",
       redeemedByEmail,
+      voided: coupon.voidedAt !== null,
       createdAt: coupon.createdAt,
     };
   });
@@ -296,6 +302,10 @@ export default function Team({ loaderData }: Route.ComponentProps) {
                         <span className="text-muted-foreground">
                           Claimed by {coupon.redeemedByEmail}
                         </span>
+                      ) : coupon.voided ? (
+                        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                          Refunded
+                        </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
                           Unclaimed
@@ -303,7 +313,7 @@ export default function Team({ loaderData }: Route.ComponentProps) {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {!coupon.redeemedByEmail && (
+                      {!coupon.redeemedByEmail && !coupon.voided && (
                         <CopyButton code={coupon.code} />
                       )}
                     </td>

@@ -2353,8 +2353,50 @@ This course is still in draft while the cluster examples are rewritten against t
     .where(eq(schema.coupons.id, seededCoupons[1].id))
     .run();
 
+  // Bossy also bought 3 seats of course 3 and got a Refund before anyone
+  // claimed one. Approving that Refund Request voided every seat code, so
+  // these codes show what a refunded team licence looks like.
+  const [refundedTeamPurchase] = db
+    .insert(schema.purchases)
+    .values({
+      userId: bossy.id,
+      courseId: course3.id,
+      amountPaid: 4999 * 3,
+      country: "US",
+      createdAt: daysAgo(12),
+    })
+    .returning()
+    .all();
+
+  db.insert(schema.coupons)
+    .values(
+      ["TEAM-DESIGN-P6Q7R8", "TEAM-DESIGN-S9T0U1", "TEAM-DESIGN-V2W3X4"].map(
+        (code) => ({
+          teamId: team1.id,
+          courseId: course3.id,
+          code,
+          purchaseId: refundedTeamPurchase.id,
+          createdAt: daysAgo(12),
+          voidedAt: daysAgo(9),
+        })
+      )
+    )
+    .run();
+
+  db.insert(schema.refunds)
+    .values({
+      purchaseId: refundedTeamPurchase.id,
+      status: RefundStatus.Approved,
+      reason: "We picked a different design course for the team.",
+      amountRefunded: refundedTeamPurchase.amountPaid,
+      requestedAt: daysAgo(10),
+      resolvedAt: daysAgo(9),
+      resolvedByUserId: admin.id,
+    })
+    .run();
+
   console.log(
-    `Created 1 team with Bossy McBossface as admin, 1 team purchase, and ${seededCoupons.length} coupons (${countRows(schema.coupons, isNotNull(schema.coupons.redeemedByUserId))} redeemed, ${countRows(schema.coupons, isNull(schema.coupons.redeemedByUserId))} available).`
+    `Created 1 team with Bossy McBossface as admin, 2 team purchases, and ${seededCoupons.length + 3} coupons (${countRows(schema.coupons, isNotNull(schema.coupons.redeemedByUserId))} redeemed, ${countRows(schema.coupons, isNotNull(schema.coupons.voidedAt))} voided by a Refund).`
   );
 
   // ─── Generated history ───
