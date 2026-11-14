@@ -15,6 +15,7 @@ import { db } from "~/db";
 import { activeEnrollmentOf } from "~/lib/enrollments";
 import {
   hasClaimedSeat,
+  isTeamLicence,
   voidUnclaimedSeats,
 } from "~/lib/seat-codes.server";
 import { asc, desc, eq, ne } from "drizzle-orm";
@@ -163,15 +164,19 @@ export async function action({ request }: Route.ActionArgs) {
           );
         }
 
-        // Access ends right away. The row is kept, not deleted (ADR 0001),
-        // and lesson progress is untouched for if they buy again.
-        tx.update(enrollments)
-          .set({ revokedAt: new Date().toISOString() })
-          .where(activeEnrollmentOf(request.learnerId, request.courseId))
-          .run();
-
-        // On a team licence, nobody can claim a seat that has been refunded.
-        voidUnclaimedSeats(request.purchaseId, tx);
+        if (isTeamLicence(request.purchaseId, tx)) {
+          // A team licence gave the buyer no enrollment, so there is none to
+          // revoke (any they have came from a separate purchase). Nobody can
+          // claim a seat that has been refunded.
+          voidUnclaimedSeats(request.purchaseId, tx);
+        } else {
+          // Access ends right away. The row is kept, not deleted (ADR 0001),
+          // and lesson progress is untouched for if they buy again.
+          tx.update(enrollments)
+            .set({ revokedAt: new Date().toISOString() })
+            .where(activeEnrollmentOf(request.learnerId, request.courseId))
+            .run();
+        }
 
         return { amountRefunded: request.amountPaid };
       },
